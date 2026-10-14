@@ -2,7 +2,7 @@ import csv
 import json
 import os
 
-path = r"C:\Users\Sadiul Hakim\OneDrive\Desktop\Curves\2026 DataHub-Capacity5.json"
+path = r"C:\Users\Sadiul Hakim\OneDrive\Desktop\Curves\Wholesale\2026 DataHub-Capacity5.json"
 csv_path = os.path.splitext(path)[0] + ".csv"
 
 curves_list = []
