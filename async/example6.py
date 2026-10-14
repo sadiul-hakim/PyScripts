@@ -45,6 +45,30 @@ In short:
 Note: `gather(return_exceptions=True)` collects exceptions as results instead of propagating them immediately. `TaskGroup` is generally preferable when tasks are related and should succeed or fail together.
 """
 
+"""
+`asyncio.to_thread()` uses an actual OS thread managed by Python's thread pool.
+
+```
+result = await asyncio.to_thread(fetch_data, 10)
+```
+
+How it works:
+
+1. Python submits `fetch_data(10)` to a thread pool.
+2. An available worker thread executes the function.
+3. The OS schedules that thread to run on the CPU.
+4. The main thread's event loop remains free to handle other async tasks.
+5. When the function finishes, its result becomes available to `await`.
+
+Important distinction:
+
+- Thread: Shares the same process memory; useful for blocking I/O.
+- Process: Has its own memory space and Python interpreter; useful for CPU-bound parallelism.
+- `asyncio` task: Not an OS thread. It is a coroutine managed by the event loop.
+
+In standard CPython, threads generally cannot execute CPU-bound Python bytecode in parallel because of the GIL, but they can overlap blocking I/O operations.
+"""
+
 import time
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
@@ -58,6 +82,8 @@ def fetch_data(param: int) -> str:
 
 
 async def main():
+
+    # asyncio.to_thread() uses an actual OS thread managed by Python's thread pool.
     task1 = asyncio.create_task(
         asyncio.to_thread(fetch_data, 1)
     )  # This schedules the task and runs the function
