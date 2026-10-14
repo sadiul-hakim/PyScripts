@@ -29,6 +29,22 @@ Quick rule of thumb:
 Important: `gather()` and `TaskGroup()` are not alternatives to threads or processes; they coordinate asynchronous tasks. You can combine them with `to_thread()` when needed.
 """
 
+"""
+| Behavior                     | `asyncio.gather()`                                              | `asyncio.TaskGroup()`                                   |
+| ---------------------------- | --------------------------------------------------------------- | ------------------------------------------------------- |
+| One task raises an exception | Propagates the first exception by default                       | Cancels the remaining tasks                             |
+| Other tasks                  | Usually continue running                                        | Cancelled and awaited before exiting the group          |
+| Error handling               | Other tasks may still be running after the exception propagates | Group waits for tasks to finish or cancel               |
+| Exceptions                   | Typically propagates one exception                              | Raises an `ExceptionGroup` containing the task failures |
+
+In short:
+
+- `gather()` — if one task fails, reports the error but does not automatically cancel the other tasks.
+- `TaskGroup()` — if one task fails, cancels the remaining tasks and waits for them to finish cleaning up.
+
+Note: `gather(return_exceptions=True)` collects exceptions as results instead of propagating them immediately. `TaskGroup` is generally preferable when tasks are related and should succeed or fail together.
+"""
+
 import time
 import asyncio
 from concurrent.futures import ProcessPoolExecutor
