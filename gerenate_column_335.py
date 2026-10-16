@@ -1,13 +1,7 @@
 import json
 
 
-retail = {
-    "ADVENTRES": 6,
-    "AESIRES": 5,
-    "APRIRES": 306,
-    "PRISMRES": 153,
-    "TLIRES": 319
-}
+retail = {"ADVENTRES": 6, "AESIRES": 5, "APRIRES": 306, "PRISMRES": 153, "TLIRES": 319}
 
 wholesale = {
     "APRI": 84,
@@ -28,10 +22,22 @@ wholesale = {
     "TMO": 69,
     "TPVI": 109,
     "TSI": 179,
-    "TVI": 3
+    "TVI": 3,
 }
 
-sample_column = '''
+json_keys = [
+    "Generation_Revenue",
+    "DU_Government_Taxes",
+    "Transmission_and_System_Loss",
+    "Distribution_Charges",
+    "Universal_Charges",
+    "Government_Taxes",
+    "Early_Payment_Discount",
+    "FITALLSUBTOTAL",
+    "GEAALLSUBTOTAL",
+]
+
+sample_column = """
 {
     "name": "",
     "description": "",
@@ -91,17 +97,10 @@ sample_column = '''
     "publishDateSourceTimeZone": null,
     "showPublishDate": false
 }
-'''
+"""
 
-JSON_KEY_KWH = "kWh_Billed"
-JSON_KEY_TOTAL_BILL = "Total_Bill"
 
 res_path = r"C:\Users\Sadiul Hakim\OneDrive\Desktop\res.json"
-
-retail_total_column_name = []
-retail_kwh_column_name = []
-wholesale_total_column_name = []
-wholesale_kwh_column_name = []
 
 
 def generate_column(obj, json_key, name_list):
@@ -109,14 +108,14 @@ def generate_column(obj, json_key, name_list):
     list = []
     for key, value in obj.items():
         col = json.loads(sample_column)
-        col['name'] = json_key + "_" + key
-        col['label'] = json_key + "_" + key
-        expression: str = col['expression']
-        expression = expression.replace('[ID]', str(value))
-        expression = expression.replace('[JSON_KEY]', json_key)
-        col['expression'] = expression
+        col["name"] = json_key + "_" + key
+        col["label"] = json_key + "_" + key
+        expression: str = col["expression"]
+        expression = expression.replace("[ID]", str(value))
+        expression = expression.replace("[JSON_KEY]", json_key)
+        col["expression"] = expression
 
-        name_list.append("DATASET__TABLE_DATA__"+col['name'])
+        name_list.append("DATASET__TABLE_DATA__" + col["name"])
         list.append(col)
 
     return list
@@ -124,47 +123,51 @@ def generate_column(obj, json_key, name_list):
 
 def generate_list_column(name, list):
     col = json.loads(sample_column)
-    col['name'] = name
-    col['label'] = name
+    col["name"] = name
+    col["label"] = name
 
-    expression = ''
+    expression: str = ""
     for i in list:
         expression += f"{i} + "
 
-    col['expression'] = expression
+    col["expression"] = expression
     return col
 
 
-retail_total_columns = generate_column(
-    retail, JSON_KEY_TOTAL_BILL, retail_total_column_name)
-retail_kwh_columns = generate_column(
-    retail, JSON_KEY_KWH, retail_kwh_column_name)
+def generate_key_column(key):
+    col = json.loads(sample_column)
+    col["name"] = key
+    col["label"] = key
+    expression: str = (
+        f"DATASET__TABLE_DATA__{key}_Retail + DATASET__TABLE_DATA__{key}_Wholesale"
+    )
+
+    col["expression"] = expression
+    return col
 
 
-wholesale_total_columns = generate_column(
-    wholesale, JSON_KEY_TOTAL_BILL, wholesale_total_column_name)
-wholesale_kwh_columns = generate_column(
-    wholesale, JSON_KEY_KWH, wholesale_kwh_column_name)
+giant_list = []
+for key in json_keys:
+    retail_name_list = []
+    wholesale_name_list = []
 
-# totals
+    # Actual Column List
+    retail_columns = generate_column(retail, key, retail_name_list)
+    wholesale_columns = generate_column(wholesale, key, wholesale_name_list)
 
-kWh_Billed_Retail = generate_list_column(
-    'kWh_Billed_Retail', retail_kwh_column_name)
-Total_Bill_Wholesale = generate_list_column(
-    'Total_Bill_Retail', retail_total_column_name)
+    retail_total_column = generate_list_column(f"{key}_Retail", retail_name_list)
+    wholesale_total_column = generate_list_column(
+        f"{key}_Wholesale", wholesale_name_list
+    )
 
-kWh_Billed_Wholesale = generate_list_column(
-    'kWh_Billed_Wholesale', wholesale_kwh_column_name)
-Total_Bill_Retail = generate_list_column(
-    'Total_Bill_Wholesale', wholesale_total_column_name)
+    key_column = generate_key_column(key)
 
-giant_list = retail_total_columns + retail_kwh_columns + \
-    wholesale_total_columns + wholesale_kwh_columns
+    giant_list.extend(retail_columns)
+    giant_list.extend(wholesale_columns)
+    giant_list.append(retail_total_column)
+    giant_list.append(wholesale_total_column)
+    giant_list.append(key_column)
 
-giant_list.append(kWh_Billed_Retail)
-giant_list.append(Total_Bill_Wholesale)
-giant_list.append(kWh_Billed_Wholesale)
-giant_list.append(Total_Bill_Retail)
 
 print(len(giant_list))
 with open(res_path, "w") as file:
