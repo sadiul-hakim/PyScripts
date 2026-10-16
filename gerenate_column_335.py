@@ -46,7 +46,7 @@ sample_column = """
     "hideColumn": false,
     "subtotal": "average",
     "type": "FORMULA",
-    "expression": " dataCurve('BusinessUnitData:BusinessUnit,[ID],Type,3,SubType,145,Key,[JSON_KEY]',26)",
+    "expression": " dataCurve('BusinessUnitData:BusinessUnit,[ID],Type,3,SubType,145,Key,[JSON_KEY]',26,5,'TIME_FILTER_MonthOverMonth_1')",
     "publishDate": null,
     "endPublishDate": null,
     "operator": null,
@@ -125,12 +125,7 @@ def generate_list_column(name, list):
     col = json.loads(sample_column)
     col["name"] = name
     col["label"] = name
-
-    expression: str = ""
-    for i in list:
-        expression += f"{i} + "
-
-    col["expression"] = expression
+    col["expression"] = " + ".join(str(i) for i in list)
     return col
 
 
