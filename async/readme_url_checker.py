@@ -8,71 +8,91 @@ import urllib.parse
 import httpx
 
 
-def resolve_to_raw_url(target: str) -> str:
-    """If given a standard GitHub repo URL, converts it to its raw README URL.
+def resolve_github_readme_urls(target: str) -> list[str]:
+    """Converts a GitHub repo URL into candidate raw README endpoints.
 
-    Example:
-      https://github.com/psf/requests ->
-      https://raw.githubusercontent.com/psf/requests/main/README.md
+    Checks both .rst and .md across main and master branches.
     """
     gh_match = re.match(r"^https?://github\.com/([^/]+)/([^/]+)/?$", target.strip())
     if gh_match:
         owner, repo = gh_match.groups()
-        return f"https://raw.githubusercontent.com/{owner}/{repo}/main/README.md"
-    return target
+        candidates = []
+        for branch in ("main", "master"):
+            # RST first since projects like Django prioritize it, then MD
+            candidates.append(
+                f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.rst"
+            )
+            candidates.append(
+                f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
+            )
+        return candidates
+    return [target]
 
 
-async def fetch_markdown_content(client: httpx.AsyncClient, source: str) -> str:
-    """Fetches markdown text from either a remote HTTP/HTTPS URL or a local file path."""
+async def fetch_doc_content(client: httpx.AsyncClient, source: str) -> tuple[str, str]:
+    """Fetches document text from a local path or candidate remote URLs."""
     parsed = urllib.parse.urlsplit(source)
 
-    # 1. Remote URL Case
     if parsed.scheme in ("http", "https"):
-        target_url = resolve_to_raw_url(source)
-        print(f"📥 Downloading markdown from: {target_url}")
+        candidates = resolve_github_readme_urls(source)
+        for url in candidates:
+            try:
+                print(f"📥 Checking: {url}")
+                resp = await client.get(url, follow_redirects=True, timeout=8.0)
+                if resp.status_code == 200:
+                    print(f"✅ Found document at: {url}")
+                    return resp.text, url
+            except httpx.RequestError:
+                continue
 
-        try:
-            resp = await client.get(target_url, follow_redirects=True, timeout=10.0)
-            # If default branch was 'master' instead of 'main', try fallback
-            if resp.status_code == 404 and "githubusercontent.com" in target_url:
-                fallback_url = target_url.replace("/main/", "/master/")
-                resp = await client.get(
-                    fallback_url, follow_redirects=True, timeout=10.0
-                )
-
-            resp.raise_for_status()
-            return resp.text
-        except httpx.HTTPStatusError as e:
-            print(
-                f"Error: Failed to download file (HTTP {e.response.status_code})",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error downloading: {e}", file=sys.stderr)
-            sys.exit(1)
-
-    # 2. Local File Case
-    local_path = Path(source)
-    if not local_path.exists():
         print(
-            f"Error: Local file '{source}' not found and is not a valid URL.",
+            f"Error: Could not find a valid README (.rst or .md) for '{source}'.",
             file=sys.stderr,
         )
         sys.exit(1)
 
-    return local_path.read_text(encoding="utf-8", errors="replace")
+    local_path = Path(source)
+    if not local_path.exists():
+        print(f"Error: Local file '{source}' not found.", file=sys.stderr)
+        sys.exit(1)
+
+    return local_path.read_text(encoding="utf-8", errors="replace"), source
+
+
+def is_local_host(netloc: str) -> bool:
+    """Checks whether a domain/netloc points to a local machine."""
+    # Strip port if present (e.g., '127.0.0.1:8000' -> '127.0.0.1')
+    host = netloc.split(":")[0].strip("[]").lower()
+
+    # Local hostnames and IPs
+    local_identifiers = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+    return (
+        host in local_identifiers
+        or host.startswith("127.")  # Entire 127.0.0.0/8 loopback range
+        or host.endswith(".local")
+        or host.endswith(".localhost")
+    )
 
 
 def extract_urls(text: str) -> list[str]:
-    """Finds all HTTP/HTTPS links from markdown syntax."""
+    """Extracts URLs from Markdown, reStructuredText, and plain text,
 
-    print("Extracting urls....")
+    ignoring loopback/localhost references.
+    """
     patterns = [
-        r"!?\[.*?\]\((https?://[^\s\)]+)\)",
-        r"^\s*\[.*?\]:\s*(https?://[^\s]+)",
-        r"<(https?://[^>]+)>",
-        r"(?<!\()(https?://[a-zA-Z0-9.\-_~:/?#\[\]@!$&'*+,;=%]+)",
+        # Markdown standard: [text](https://...) or ![alt](https://...)
+        r"!?\[(?:[^\[\]]|(?:\([^()]*\)))*\]\((https?://[^\s\)]+)\)",
+        # Markdown reference: [id]: https://...
+        r"^\s*\[[^\]]+\]:\s*(https?://[^\s]+)",
+        # RST inline links: `Text <https://...>`_
+        r"`[^`]*?<((?:https?://)[^\s>]+)>`_",
+        # RST hyperlink target definition: .. _name: https://...
+        r"^\s*\.\.\s+_[^:]+:\s*(https?://[^\s]+)",
+        # Angle bracket autolinks: <https://...>
+        r"<((?:https?://)[^>]+)>",
+        # Bare URLs in text
+        r"(?<![\[\(])(https?://[a-zA-Z0-9.\-_~:/?#@!$&'*+,;=%]+)",
     ]
 
     found = []
@@ -81,10 +101,20 @@ def extract_urls(text: str) -> list[str]:
 
     cleaned = []
     for raw in found:
-        url = raw.rstrip(".,;)>'\"")
-        parsed = urllib.parse.urlsplit(url)
-        if parsed.scheme in ("http", "https") and parsed.netloc:
-            cleaned.append(url)
+        url = raw.rstrip(".,;)>'\"_`[]")
+
+        try:
+            parsed = urllib.parse.urlsplit(url)
+
+            # Check valid scheme, valid netloc, and exclude localhosts
+            if (
+                parsed.scheme in ("http", "https")
+                and parsed.netloc
+                and not is_local_host(parsed.netloc)
+            ):
+                cleaned.append(url)
+        except ValueError:
+            continue
 
     return list(dict.fromkeys(cleaned))
 
@@ -138,12 +168,11 @@ async def main_async(target: str, max_concurrency: int, timeout: float):
     }
 
     async with httpx.AsyncClient(headers=headers, verify=False) as client:
-        # Step 1: Download or read markdown
-        content = await fetch_markdown_content(client, target)
+        content, source_url = await fetch_doc_content(client, target)
         urls = extract_urls(content)
 
         if not urls:
-            print("No HTTP/HTTPS URLs found in the markdown.")
+            print("No HTTP/HTTPS URLs found in the document.")
             return
 
         print(
@@ -151,7 +180,6 @@ async def main_async(target: str, max_concurrency: int, timeout: float):
         )
         print("-" * 80)
 
-        # Step 2: Concurrently check all links
         sem = asyncio.Semaphore(max_concurrency)
         start_time = time.perf_counter()
 
@@ -160,7 +188,6 @@ async def main_async(target: str, max_concurrency: int, timeout: float):
 
         elapsed = time.perf_counter() - start_time
 
-        # Step 3: Print report
         broken = 0
         print(f"{'Status':<10} | {'Latency':<9} | {'URL'}")
         print("-" * 80)
@@ -186,13 +213,13 @@ async def main_async(target: str, max_concurrency: int, timeout: float):
 
 def cli():
     parser = argparse.ArgumentParser(
-        description="Download a README/Markdown file and check all its links asynchronously."
+        description="Async Link Checker for GitHub repos, Markdown, and RST files."
     )
     parser.add_argument(
         "target",
         nargs="?",
-        default="https://github.com/psf/requests",
-        help="Local file path, direct markdown raw URL, or GitHub repo URL (default: psf/requests)",
+        default="https://github.com/django/django",
+        help="Local file path or GitHub repo URL (default: https://github.com/django/django)",
     )
     parser.add_argument(
         "-c",
