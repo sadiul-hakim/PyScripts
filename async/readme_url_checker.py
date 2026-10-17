@@ -25,6 +25,9 @@ def resolve_github_readme_urls(target: str) -> list[str]:
             candidates.append(
                 f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.md"
             )
+            candidates.append(
+                f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/README.adoc"
+            )
         return candidates
     return [target]
 
